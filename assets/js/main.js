@@ -41,51 +41,135 @@ loops.forEach(video => {
     else { userPaused.add(video); manualPlay.delete(video); video.pause(); }
   });
 });
-// Carousel: retain visible dwell time across viewport, tab and dialog pauses.
+// Carousel: native touch scrolling; only mouse dragging and deliberate paging are animated.
 document.querySelectorAll('.media-carousel').forEach(carousel => {
-  const slides = [...carousel.querySelectorAll('.carousel-slide')], dots = [...carousel.querySelectorAll('.carousel-dots button')];
-  let current = 0, inView = false, manual = false, timer = null, started = 0, remaining = 4000;
-  const videoAt = index => slides[index].querySelector('video');
-  const running = () => inView && !document.hidden && !dialog.open;
-  function stop() {
-    if (timer !== null) { clearTimeout(timer); remaining = Math.max(0, remaining - (performance.now() - started)); timer = null; }
-    videoAt(current)?.pause();
+  const track = carousel.querySelector('.carousel-track'), slides = [...track.children];
+  const bars = [...carousel.querySelectorAll('.carousel-progress i')], status = carousel.querySelector('.carousel-status');
+  let current = 0, target = 0, inView = false, manual = false, hovered = false, settled = true;
+  let width = track.getBoundingClientRect().width;
+  let elapsed = 0, clock = 0, frame = 0, tween = null, drag = null, debounce, suppressUntil = 0;
+  const videoAt = i => slides[i].querySelector('video'), limit = () => videoAt(current) ? 12000 : 4000;
+  const running = () => inView && !document.hidden && !dialog.open && !hovered;
+  const automatic = () => !manual && !reduceMotion.matches;
+  // Invert the x component of cubic-bezier(.22,1,.36,1), then evaluate y.
+  const ease = x => {
+    if (x === 0 || x === 1) return x;
+    let low = 0, high = 1, t = x;
+    for (let i = 0; i < 12; i++) { t = (low + high) / 2; const v = 3 * (1 - t) ** 2 * t * .22 + 3 * (1 - t) * t * t * .36 + t ** 3; if (v < x) low = t; else high = t; }
+    return 1 - (1 - t) ** 3;
+  };
+  function progress() {
+    const video = videoAt(current), fraction = Math.max(elapsed / limit(), video?.duration ? video.currentTime / video.duration : 0);
+    bars.forEach((bar, i) => { bar.style.transform = `scaleX(${i === current ? automatic() ? Math.min(1, fraction) : 1 : 0})`; });
   }
+  function account() { if (clock) elapsed += performance.now() - clock; clock = 0; }
   function sync() {
-    if (!running()) { stop(); return; }
-    const video = videoAt(current);
-    if (video && (!reduceMotion.matches || manual)) {
-      if (!video.hasAttribute('src')) video.src = video.dataset.src;
-      video.play().catch(() => {});
+    cancelAnimationFrame(frame); account();
+    if (settled && running() && automatic() && videoAt(current)?.ended) { go(current + 1); return; }
+    const video = videoAt(current), playing = settled && running() && (!reduceMotion.matches || manual);
+    if (video) {
+      video.loop = manual;
+      if (playing) { if (!video.hasAttribute('src')) video.src = video.dataset.src; if (video.paused) video.play().catch(() => {}); }
+      else video.pause();
     }
-    if (!reduceMotion.matches && timer === null) {
-      started = performance.now();
-      timer = setTimeout(() => show((current + 1) % slides.length), remaining);
-    }
+    progress();
+    if (settled && running() && automatic()) clock = performance.now();
+    if (clock || tween) frame = requestAnimationFrame(tick);
   }
-  function show(index, clicked = false) {
-    stop();
-    const previous = videoAt(current);
-    if (previous?.hasAttribute('src')) { previous.removeAttribute('src'); previous.load(); }
-    current = index; manual = clicked; remaining = videoAt(current) ? 12000 : 4000;
+  function moving() {
+    settled = false; sync();
+    slides.forEach(slide => slide.classList.remove('is-settled'));
+  }
+  function settle() {
+    if (tween || drag) return;
+    clearTimeout(debounce);
+    const index = Math.max(0, Math.min(slides.length - 1, Math.round(track.scrollLeft / width)));
+    if (index !== current) elapsed = 0;
+    current = target = index; settled = true;
     slides.forEach((slide, i) => {
-      slide.classList.toggle('is-active', i === current);
-      slide.setAttribute('aria-hidden', String(i !== current));
-      dots[i].setAttribute('aria-pressed', String(i === current));
+      if (i !== current && slide.contains(document.activeElement)) track.focus({preventScroll: true});
+      slide.setAttribute('aria-hidden', String(i !== current)); slide.inert = i !== current;
+      slide.classList.toggle('is-settled', i === current);
+      // Unload only once another slide has settled, so a cancelled swipe resumes in place.
+      const video = slide.querySelector('video');
+      if (i !== current && video?.hasAttribute('src')) { video.pause(); video.removeAttribute('src'); video.load(); }
     });
+    status.textContent = `Slide ${current + 1} of ${slides.length}: ${slides[current].querySelector('.slide-caption').textContent}`;
     sync();
   }
-  dots.forEach((dot, i) => dot.addEventListener('click', () => show(i, true)));
-  slides.forEach((slide, i) => videoAt(i)?.addEventListener('ended', () => {
-    if (i === current && running() && !reduceMotion.matches) show((current + 1) % slides.length);
-  }));
+  function go(index, user = false, instant = false) {
+    if (user) manual = true;
+    clearTimeout(debounce); moving(); target = (index + slides.length) % slides.length;
+    track.style.scrollSnapType = 'none';
+    tween = {from: track.scrollLeft, to: target * width, start: performance.now(), duration: !user && current === slides.length - 1 && target === 0 ? 650 : 450};
+    if (reduceMotion.matches || instant) tween.duration = 0;
+    sync(); if (!tween.duration) tick(performance.now());
+  }
+  function tick(now) {
+    account();
+    if (tween) {
+      const p = tween.duration ? Math.min(1, (now - tween.start) / tween.duration) : 1;
+      track.scrollLeft = p === 1 ? tween.to : tween.from + (tween.to - tween.from) * ease(p);
+      if (p === 1) { tween = null; track.style.scrollSnapType = ''; settle(); return; }
+    } else if (elapsed >= limit() || videoAt(current)?.ended) { go(current + 1); return; }
+    progress(); if (settled && running() && automatic()) clock = now;
+    frame = requestAnimationFrame(tick);
+  }
+  function interrupt() {
+    if (!tween) return;
+    tween = null; track.style.scrollSnapType = ''; sync();
+    clearTimeout(debounce); debounce = setTimeout(settle, 120);
+  }
+  track.addEventListener('scroll', () => {
+    if (tween || drag || (settled && Math.abs(track.scrollLeft - current * width) < 1)) return;
+    clearTimeout(debounce); manual = true; if (settled) moving();
+    if (!('onscrollend' in track)) debounce = setTimeout(settle, 120);
+  }, {passive: true});
+  track.addEventListener('scrollend', settle);
+  track.addEventListener('wheel', event => { if (event.deltaX || event.shiftKey) interrupt(); }, {passive: true});
+  track.addEventListener('pointerdown', event => {
+    suppressUntil = 0; interrupt();
+    if (event.pointerType !== 'mouse' || event.button !== 0) return;
+    drag = {id: event.pointerId, x: event.clientX, last: event.clientX, time: performance.now(), velocity: 0, left: track.scrollLeft, index: Math.round(track.scrollLeft / width), moved: false};
+  });
+  track.addEventListener('pointermove', event => {
+    if (!drag || event.pointerId !== drag.id) return;
+    const now = performance.now(), dx = event.clientX - drag.x;
+    drag.velocity = (event.clientX - drag.last) / Math.max(1, now - drag.time); drag.last = event.clientX; drag.time = now;
+    if (!drag.moved && Math.abs(dx) <= 6) return;
+    if (!drag.moved) { drag.moved = true; manual = true; moving(); track.setPointerCapture(event.pointerId); track.style.scrollSnapType = 'none'; track.classList.add('is-dragging'); }
+    event.preventDefault(); track.scrollLeft = drag.left - dx;
+  });
+  function release(event) {
+    if (!drag || event.pointerId !== drag.id) return;
+    const d = drag, dx = event.clientX - d.x, velocity = performance.now() - d.time < 80 ? d.velocity : 0;
+    drag = null; track.classList.remove('is-dragging');
+    if (track.hasPointerCapture(d.id)) track.releasePointerCapture(d.id);
+    if (!d.moved) { settle(); return; }
+    suppressUntil = performance.now() + 500;
+    const direction = Math.abs(velocity) > .4 ? -Math.sign(velocity) : Math.abs(dx) > width * .15 ? -Math.sign(dx) : 0;
+    go(d.index + (event.type === 'pointerup' ? direction : 0), true);
+  }
+  ['pointerup', 'pointercancel', 'lostpointercapture'].forEach(event => track.addEventListener(event, release));
+  track.addEventListener('pointerleave', event => { if (drag && !drag.moved) release(event); });
+  track.addEventListener('dragstart', event => event.preventDefault());
+  track.addEventListener('click', event => { if (performance.now() < suppressUntil) { event.preventDefault(); event.stopImmediatePropagation(); } }, true);
+  track.addEventListener('keydown', event => { if (['ArrowLeft', 'ArrowRight'].includes(event.key)) { event.preventDefault(); go(target + (event.key === 'ArrowRight' ? 1 : -1), true); } });
+  ['prev', 'next'].forEach((name, i) => {
+    const button = carousel.querySelector('.carousel-' + name); button.hidden = false;
+    button.addEventListener('click', () => go(target + (i ? 1 : -1), true));
+  });
+  carousel.addEventListener('pointerenter', event => { if (event.pointerType === 'mouse') { hovered = true; sync(); } });
+  carousel.addEventListener('pointerleave', event => { if (event.pointerType === 'mouse') { hovered = false; sync(); } });
   const observer = new IntersectionObserver(entries => {
-    inView = entries[0].isIntersecting && entries[0].intersectionRatio >= 0.2; sync();
-  }, {threshold: [0, 0.2]});
+    const next = entries[0].isIntersecting && entries[0].intersectionRatio >= .2;
+    if (next && !inView) manual = false;
+    inView = next; sync();
+  }, {threshold: [0, .2]});
   observer.observe(carousel.closest('article'));
-  reduceMotion.addEventListener('change', () => show(0));
-  carouselSync.push(sync);
-  remaining = videoAt(0) ? 12000 : 4000;
+  new ResizeObserver(entries => { width = entries[0].contentRect.width; go(current, false, true); }).observe(track);
+  reduceMotion.addEventListener('change', () => { manual = false; go(current, false, true); });
+  carousel.classList.add('is-enhanced'); carouselSync.push(sync); settle();
 });
 // End carousel.
 reduceMotion.addEventListener('change', () => { manualPlay.clear(); syncPlayback(); });
@@ -106,28 +190,56 @@ dialog.addEventListener('close', () => {
   fullVideo.pause(); fullVideo.removeAttribute('src'); fullVideo.load(); syncPlayback();
 });
 const nav = document.querySelector('.section-nav'), navLinks = [...nav.querySelectorAll('a')];
-const sections = navLinks.map(link => document.querySelector(link.hash));
+const sections = navLinks.map(link => document.querySelector(link.hash)), indicator = nav.querySelector('.nav-indicator');
+let lockedSection = null, scrollScheduled = false, scrollStop;
+function positionIndicator() {
+  const link = nav.querySelector('[aria-current]');
+  if (link) { indicator.style.width = link.offsetWidth + 'px'; indicator.style.transform = `translateX(${link.offsetLeft}px)`; }
+}
 function markSection(id) {
   navLinks.forEach(link => {
-    const active = link.hash === '#' + id;
+    const active = link.hash === '#' + id, changed = active && !link.hasAttribute('aria-current');
     if (active) link.setAttribute('aria-current', 'location');
     else link.removeAttribute('aria-current');
-    if (active && matchMedia('(max-width: 899px)').matches) nav.scrollTo({left: link.offsetLeft - (nav.clientWidth - link.offsetWidth) / 2, behavior: 'instant'});
+    if (changed && matchMedia('(max-width: 899px)').matches) nav.scrollLeft = link.offsetLeft - (nav.clientWidth - link.offsetWidth) / 2;
   });
+  positionIndicator();
 }
 function syncSection() {
+  if (lockedSection) return;
   const atTop = window.scrollY <= 2, atBottom = window.scrollY + window.innerHeight >= document.documentElement.scrollHeight - 2;
   const current = atTop ? sections[0] : atBottom ? sections[sections.length - 1] : sections.filter(section => section.getBoundingClientRect().top <= 120).pop() || sections[0];
   markSection(current.id);
 }
-let scrollScheduled = false;
+function unlockSection() { clearTimeout(scrollStop); lockedSection = null; syncSection(); }
 window.addEventListener('scroll', () => {
+  clearTimeout(scrollStop); scrollStop = setTimeout(unlockSection, 150);
   if (scrollScheduled) return;
   scrollScheduled = true; requestAnimationFrame(() => { syncSection(); scrollScheduled = false; });
 }, {passive: true});
+window.addEventListener('scrollend', unlockSection);
 window.addEventListener('resize', syncSection);
-syncSection();
-navLinks.forEach(link => link.addEventListener('click', () => markSection(link.hash.slice(1))));
+navLinks.forEach(link => link.addEventListener('click', () => {
+  lockedSection = link.hash.slice(1); markSection(lockedSection);
+  clearTimeout(scrollStop); scrollStop = setTimeout(unlockSection, 150);
+}));
+new ResizeObserver(positionIndicator).observe(nav);
+document.fonts.ready.then(positionIndicator);
+syncSection(); requestAnimationFrame(() => nav.classList.add('is-ready'));
+// Observe the large avatar once per crossing; never measure it in the scroll handler.
+const header = document.querySelector('.site-header'), miniAvatar = header.querySelector('.mini-avatar');
+const mobile = matchMedia('(max-width: 899px)');
+let avatarObserver;
+function observeAvatar() {
+  avatarObserver?.disconnect(); header.classList.remove('is-condensed'); miniAvatar.tabIndex = -1;
+  if (!mobile.matches) return;
+  avatarObserver = new IntersectionObserver(entries => {
+    const condensed = !entries[0].isIntersecting && entries[0].boundingClientRect.bottom <= 48;
+    header.classList.toggle('is-condensed', condensed); miniAvatar.tabIndex = condensed ? 0 : -1;
+  }, {rootMargin: '-48px 0px 0px', threshold: 0});
+  avatarObserver.observe(document.querySelector('.avatar'));
+}
+mobile.addEventListener('change', observeAvatar); observeAvatar();
 // Visitors: local sample preview, daily country data and a live public total.
 (() => {
   const section = document.querySelector('#visitors'), data = window.VISITORS;
@@ -191,3 +303,27 @@ navLinks.forEach(link => link.addEventListener('click', () => markSection(link.h
     .then(live => { if (/^\d[\d,]*$/.test(String(live.count))) showTotal(live.count); }).catch(() => {});
 })();
 // End visitors.
+// Run after synchronous page content (including the visitor layout) has been created.
+// Hide only below-fold content; hash destinations and the initial viewport stay visible.
+(() => {
+  const selector = 'main h2,.publication,.project,.timeline li,.awards,.visitors-layout';
+  const reveal = element => { element.classList.replace('reveal-pending', 'reveal-visible'); observer.unobserve(element); };
+  const observer = new IntersectionObserver(entries => entries.forEach(entry => { if (entry.isIntersecting) reveal(entry.target); }));
+  document.querySelectorAll(selector).forEach(element => {
+    if (reduceMotion.matches || !element.getClientRects().length || element.getBoundingClientRect().top < innerHeight || element.closest(':target')) return;
+    element.classList.add('reveal-pending'); observer.observe(element);
+  });
+  const showViewport = () => document.querySelectorAll('.reveal-pending').forEach(element => {
+    const rect = element.getBoundingClientRect();
+    if (rect.top < innerHeight && rect.bottom > 0) { element.classList.remove('reveal-pending'); observer.unobserve(element); }
+  });
+  window.addEventListener('hashchange', showViewport);
+  window.addEventListener('pageshow', showViewport);
+  document.addEventListener('focusin', event => {
+    const element = event.target.closest('.reveal-pending');
+    if (element) { element.classList.remove('reveal-pending'); observer.unobserve(element); }
+  });
+  reduceMotion.addEventListener('change', () => {
+    if (reduceMotion.matches) { document.querySelectorAll('.reveal-pending').forEach(element => element.classList.remove('reveal-pending')); observer.disconnect(); }
+  });
+})();
