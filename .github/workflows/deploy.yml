@@ -31,6 +31,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Refresh visitor data in the build workspace
+        continue-on-error: true
         env:
           GOATCOUNTER_TOKEN: ${{ secrets.GOATCOUNTER_TOKEN }}
         run: python3 tools/update-visitors.py
