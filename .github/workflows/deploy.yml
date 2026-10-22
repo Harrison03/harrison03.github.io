@@ -1,0 +1,49 @@
+name: Deploy GitHub Pages
+
+'on':
+  push:
+    branches: [main]
+  schedule:
+    - cron: '17 2 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+env:
+  # Site launch date (UTC); the site code is read from index.html.
+  GOATCOUNTER_START: '2026-10-22'
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Refresh visitor data in the build workspace
+        env:
+          GOATCOUNTER_TOKEN: ${{ secrets.GOATCOUNTER_TOKEN }}
+        run: python3 tools/update-visitors.py
+      - name: Assemble static site
+        run: |
+          mkdir -p "$RUNNER_TEMP/pages-site"
+          rsync -a --exclude='.git/' --exclude='.github/' --exclude='tools/' \
+            --exclude='README.md' --exclude='*.mjs' --exclude='*.py' \
+            ./ "$RUNNER_TEMP/pages-site/"
+      - uses: actions/configure-pages@v6
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: ${{ runner.temp }}/pages-site
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v5

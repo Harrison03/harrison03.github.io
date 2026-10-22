@@ -1,6 +1,6 @@
 # Haoran Zhao — academic homepage
 
-纯静态单页，无框架、构建步骤、统计脚本或运行时外部资源。字体和媒体均自托管，暗色跟随系统。当前仓库仅初始化 `main` 并配置 origin，没有提交或推送。
+纯静态单页，无框架；由 GitHub Actions 更新统计、组装静态发布目录并部署 Pages。字体、媒体和地图均自托管，暗色跟随系统。运行时唯一外部服务为 GoatCounter：计数脚本、计数上报和公开总数 JSON。
 
 ## 本地预览
 
@@ -11,6 +11,26 @@ python3 -m http.server 8000
 ```
 
 浏览器打开 `http://localhost:8000`。页面内容在 `index.html`，样式在 `assets/css/style.css`，交互在 `assets/js/main.js`。不要直接用 `file://` 验证视频和字体。
+
+## 访客统计上线步骤
+
+1. 注册 [GoatCounter](https://www.goatcounter.com/)，创建站点。
+2. **唯一站点代码配置**在 `index.html` 的 `<section id="visitors" data-goatcounter-code="…">`；把占位代码改为注册的代码。浏览器和 Action 都从这里读取，无需在 JS/workflow 再改一次。
+3. 在 GoatCounter 设置中开启 **Allow adding visitor counts**，允许读取 `/counter/TOTAL.json`。
+4. 在 GoatCounter 用户菜单 → API 创建 token，只授予 **读取统计（read-only statistics / stats）** 权限。
+5. GitHub 仓库 → **Settings → Secrets and variables → Actions → New repository secret**，名称为 `GOATCOUNTER_TOKEN`，值为该 token；不要写进源码。
+6. 仓库 **Settings → Pages → Build and deployment → Source** 选择 **GitHub Actions**，不选 Deploy from a branch。个人账号的私有仓库需 [GitHub Pro](https://docs.github.com/en/pages/getting-started-with-github-pages/what-is-github-pages)（[学生包](https://education.github.com/pack)可获得）；公开仓库可使用 Free。
+7. 检查 `.github/workflows/deploy.yml` 顶部的 `GOATCOUNTER_START`（默认上线日 `2026-10-22`，UTC），然后在 **Actions → Deploy GitHub Pages → Run workflow** 手动运行一次。推送到 `main`、每天 UTC 02:17（新加坡 10:17）及手动运行都会构建并部署。
+
+页面在 Projects 后显示 Visitors，不加入导航。默认 `data/visitors.js` 是 10 个国家的示例，只允许 `localhost`、`127.0.0.1` 和 `file://` 显示，并注明 Sample data。正式域名上示例/缺失数据会让整个区块隐藏，但计数脚本照常加载，开始积累真实数据。GoatCounter 默认不统计 localhost，不使用 cookie；没有额外开启本地计数。总数优先读取公开 JSON（5 秒超时），失败保留文件总数，两者都没有则隐藏数字。
+
+Action 使用 API v0 的 `/stats/total` 和 `/stats/locations`，带 Bearer token，按上线日累计并读取所有分页；仅输出国家汇总，不输出 IP 或个人数据。有 token 时只在构建工作区生成 `sample:false` 的 `data/visitors.js`，`updated` 为本次成功刷新日期；不提交回仓库。缺少 token 时脚本安全退出 0，保留仓库示例并继续部署，正式域名自动隐藏 Visitors。发布目录排除 `.git/`、`.github/`、`tools/`、`README.md`、`*.mjs` 和 `*.py`，随后 configure-pages → upload-pages-artifact → deploy-pages 直接发布，无需 bot 提交触发后续构建。
+
+工作流采用核验时的稳定大版本：[checkout v7](https://github.com/actions/checkout/releases/tag/v7.0.1)、[configure-pages v6](https://github.com/actions/configure-pages/releases/tag/v6.0.0)、[upload-pages-artifact v5](https://github.com/actions/upload-pages-artifact/releases/tag/v5.0.0)、[deploy-pages v5](https://github.com/actions/deploy-pages/releases/tag/v5.0.1)。
+
+地图已经构建，日常更新不需要 Node.js 或地图依赖。需要重建时用 Node.js ≥18 执行 `node tools/build-visitor-map.mjs`；只有该构建脚本下载固定版本的 [world-atlas 2.0.2 / Natural Earth 110m land](https://cdn.jsdelivr.net/npm/world-atlas@2.0.2/land-110m.json)、D3 7.9.0 和 topojson-client 3.1.0。使用 Equal Earth 投影、去南极洲、无国界、单一 path，输出 `assets/img/world.svg`；同时同步生成 `index.html` 中不直接显示的 SVG template，由 main.js 克隆渲染；viewBox 收紧至大陆外接框并保留约 1% 边距；内联 path 使用 `--map-land`，兼容 file:// 并保持明暗主题一致。浏览器不加载这些构建依赖。
+
+`data/country-centroids.js` 包含 243 个投影后坐标，来自 [Google DSPL countries.csv（固定提交）](https://github.com/google/dspl/blob/8a9eda10b7caa7c3bfb56a8ae15981b146f1e1e8/samples/google/canonical/countries.csv)，与地图共用投影；省略南极洲和无坐标条目。来源为国家代表经纬度，适合位置标记，并非精确行政区几何质心。Google DSPL 地理数据集的 BSD-3-Clause 声明保留于 `data/country-centroids-LICENSE.txt`（[原始声明](https://github.com/google/dspl/blob/8a9eda10b7caa7c3bfb56a8ae15981b146f1e1e8/samples/google/canonical/geo.xml)）；Natural Earth 为公有领域。缺少坐标的国家仍可列入前 8 国排行，条宽按地区总次数占比计算。桌面左列 38% 放总数和排行，右列 62% 放垂直居中的地图；手机依次显示地图、总数、排行。
 
 ## 怎么新增一篇论文
 
@@ -47,7 +67,7 @@ ISCER 使用原文第 4 页 Figure 3 装配环境总览图（300 dpi 整页渲�
 
 ## 字体和素材
 
-字体固定为 `@fontsource/montserrat@5.1.1`，仅在准备静态资产时从 `https://registry.npmjs.org/@fontsource/montserrat/-/montserrat-5.1.1.tgz` 下载，提取 `package/files/montserrat-latin-{400,500,600,700}-normal.woff2` 至 `assets/fonts/`，许可证为同包 `package/LICENSE`（保存为 `montserrat-LICENSE.txt`）。运行时只请求站内文件，使用 `font-display: swap`。
+字体固定为 `@fontsource/montserrat@5.1.1`，仅在准备静态资产时从 `https://registry.npmjs.org/@fontsource/montserrat/-/montserrat-5.1.1.tgz` 下载，提取 `package/files/montserrat-latin-{400,500,600,700}-normal.woff2` 至 `assets/fonts/`，许可证为同包 `package/LICENSE`（保存为 `montserrat-LICENSE.txt`）。运行时字体只请求站内文件，使用 `font-display: swap`。
 
 全站使用 Montserrat 400/500/600/700，中文依次回退至 PingFang SC、Noto Sans CJK SC、Microsoft YaHei、sans-serif。头像由用户原图裁切，研究素材来自工作区 Resources，完整出处和验收记录见工作区 `_codex/B_report.md`。
 

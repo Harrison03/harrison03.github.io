@@ -106,7 +106,7 @@ dialog.addEventListener('close', () => {
   fullVideo.pause(); fullVideo.removeAttribute('src'); fullVideo.load(); syncPlayback();
 });
 const nav = document.querySelector('.section-nav'), navLinks = [...nav.querySelectorAll('a')];
-const sections = [...document.querySelectorAll('main > section')];
+const sections = navLinks.map(link => document.querySelector(link.hash));
 function markSection(id) {
   navLinks.forEach(link => {
     const active = link.hash === '#' + id;
@@ -128,3 +128,66 @@ window.addEventListener('scroll', () => {
 window.addEventListener('resize', syncSection);
 syncSection();
 navLinks.forEach(link => link.addEventListener('click', () => markSection(link.hash.slice(1))));
+// Visitors: local sample preview, daily country data and a live public total.
+(() => {
+  const section = document.querySelector('#visitors'), data = window.VISITORS;
+  if (!section) return;
+  const local = location.protocol === 'file:' || ['localhost', '127.0.0.1'].includes(location.hostname);
+  const code = section.dataset.goatcounterCode;
+  if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(code)) return;
+  const base = `https://${code}.goatcounter.com`, script = document.createElement('script');
+  script.dataset.goatcounter = `${base}/count`; script.async = true;
+  script.src = 'https://gc.zgo.at/count.js'; document.head.append(script);
+  // Tracking starts even while public sample data keeps the entire section hidden.
+  if (!data || (data.sample !== false && !local)) return;
+  const number = new Intl.NumberFormat('en-US'), ns = 'http://www.w3.org/2000/svg';
+  const make = (tag, cls, text) => {
+    const node = document.createElement(tag); node.className = cls;
+    if (text !== undefined) node.textContent = text;
+    return node;
+  };
+  const layout = make('div', 'visitors-layout'), summary = make('div', 'visitors-summary');
+  const total = make('p', 'visitors-total'), label = make('p', 'visitors-label', 'total visits');
+  const showTotal = value => {
+    const valid = (typeof value === 'number' || (typeof value === 'string' && /^\d[\d,]*$/.test(value)));
+    const count = valid ? Number(String(value).replaceAll(',', '')) : NaN;
+    total.hidden = !Number.isFinite(count) || count < 0; label.hidden = total.hidden;
+    total.textContent = total.hidden ? '' : number.format(count);
+  };
+  showTotal(data.total); summary.append(total, label);
+  if (data.since) summary.append(make('p', 'visitors-meta', `since ${data.since.replace('-', '.')}`));
+  if (data.updated) summary.append(make('p', 'visitors-meta', `updated ${data.updated}`));
+  if (data.sample) summary.append(make('p', 'visitors-meta visitors-sample', 'Sample data · local preview'));
+  const detail = make('div', 'visitors-detail'), map = make('div', 'visitor-map');
+  const svg = document.querySelector('#visitor-map-template').content.firstElementChild.cloneNode(true), tooltip = make('span', 'visitor-tooltip');
+  svg.setAttribute('role', 'group');
+  svg.setAttribute('aria-label', 'Visitor locations on a world map'); tooltip.hidden = true;
+  const items = (data.items || []).filter(item => Number.isFinite(item.count) && item.count >= 0).sort((a, b) => b.count - a.count);
+  const max = Math.max(1, ...items.map(item => item.count)), sum = items.reduce((n, item) => n + item.count, 0);
+  items.forEach(item => {
+    const point = window.COUNTRY_CENTROIDS?.[item.code];
+    if (!point || !item.count) return;
+    const dot = document.createElementNS(ns, 'circle'), title = document.createElementNS(ns, 'title');
+    const text = `${item.name} · ${number.format(item.count)}`;
+    dot.setAttribute('cx', point[0]); dot.setAttribute('cy', point[1]);
+    dot.setAttribute('r', Math.max(3, 14 * Math.sqrt(item.count / max)));
+    dot.setAttribute('tabindex', '0'); dot.setAttribute('role', 'img'); dot.setAttribute('aria-label', text);
+    title.textContent = text; dot.append(title); svg.append(dot);
+    ['mouseenter', 'focus'].forEach(event => dot.addEventListener(event, () => { tooltip.textContent = text; tooltip.hidden = false; }));
+    ['mouseleave', 'blur'].forEach(event => dot.addEventListener(event, () => { tooltip.hidden = true; }));
+  });
+  map.append(svg, tooltip);
+  const list = make('ol', 'visitor-ranking'), rows = items.slice(0, 8);
+  list.setAttribute('aria-label', 'Visits by country');
+  rows.forEach(item => {
+    const row = make('li', 'visitor-row'), track = make('span', 'visitor-track'), bar = make('span', 'visitor-bar');
+    track.setAttribute('aria-hidden', 'true'); bar.style.width = `${sum ? item.count / sum * 100 : 0}%`;
+    track.append(bar); row.append(make('span', 'visitor-country', item.name), track, make('span', 'visitor-count', number.format(item.count)));
+    list.append(row);
+  });
+  detail.append(summary, list); layout.append(detail, map); section.append(layout); section.hidden = false;
+  fetch(`${base}/counter/TOTAL.json`, {credentials: 'omit', signal: AbortSignal.timeout(5000)})
+    .then(response => { if (!response.ok) throw new Error('Counter unavailable'); return response.json(); })
+    .then(live => { if (/^\d[\d,]*$/.test(String(live.count))) showTotal(live.count); }).catch(() => {});
+})();
+// End visitors.
