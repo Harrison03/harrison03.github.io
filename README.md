@@ -63,7 +63,7 @@ tools/make_loop.sh /absolute/path/to/input.mp4 1 6.5 media/pubs/new-paper
 
 ISCER 使用原文第 4 页 Figure 3 装配环境总览图（300 dpi 整页渲染后裁切），以白底 contain 单图展示；装配项目仍使用完整仿真视频与两张模板匹配图。微机器人顺序为血栓钻进、S 形轨迹、U 形轨迹、交变磁场仿真、线圈装置实拍。交变磁场来自 `2023机器人与人工智能大赛/extracted/images/答辩ppt国赛__image40.GIF`，裁去外围黑边后转为 24fps 无声 MP4，仅该 slide 使用白底。候选图与本轮验收见工作区 `_codex/shots/S_iscer_candidates.png`、`_codex/S_validation.json`。原始素材来自只读 Resources；来源、尺寸与验收见工作区 `_codex/O_media_manifest.json`、`_codex/O_validation.json` 和 `_codex/O_report.txt`。
 
-`#ongoing` 的卡片可整体替换为真机结果；同时修改标签、标题、描述、媒体和 TODO。当前 loop 展示带受力 HUD 的单次接触，Full video 展示另一段八次推动仿真，弹窗标题已注明。
+Ongoing Research 板块在论文发表前暂时移除（HTML 片段与媒体保存在本地，不在本仓库中）；恢复时把片段放回 Publications 与 Honors 之间，并在顶栏导航加回 `#ongoing` 链接。
 
 ## 字体和素材
 
